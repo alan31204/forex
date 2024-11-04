@@ -47,7 +47,6 @@ class OneFrameDummy[F[_]: Applicative] extends Algebra[F] {
   }
 
   def extractRate(json: Json, pair: Rate.Pair):  Either[Error, Rate] ={
-    println(json)
     val input = for{
       firstRateObject <- json.asArray.flatMap(array => array.headOption)
       // get the first rate object of json as Array 
@@ -81,7 +80,6 @@ class OneFrameDummy[F[_]: Applicative] extends Algebra[F] {
               case Left(_) => Left(Error.OneFrameLookupFailed("Fail to parse your JSON"))
             }
           }else {
-            println("here 3")
             Error.OneFrameLookupFailed("Your query request failed").asLeft[Rate]
           }
         println(search)
