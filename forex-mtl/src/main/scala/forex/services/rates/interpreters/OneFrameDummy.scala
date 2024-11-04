@@ -47,13 +47,17 @@ class OneFrameDummy[F[_]: Applicative] extends Algebra[F] {
   }
 
   def extractRate(json: Json, pair: Rate.Pair):  Either[Error, Rate] ={
+    println(json)
     val input = for{
-      price <- json.hcursor.get[BigDecimal]("price").toOption
+      firstRateObject <- json.asArray.flatMap(array => array.headOption)
+      // get the first rate object of json as Array 
+      price <- firstRateObject.hcursor.get[BigDecimal]("price").toOption
       // if matched, then it will be BigDecimal, else None
-      timestampString <- json.hcursor.get[String]("timestamp").toOption
+      timestampString <- firstRateObject.hcursor.get[String]("time_stamp").toOption
+      // println(timestampString)
       timestamp = Timestamp(OffsetDateTime.parse(timestampString))
+      
     } yield Rate(pair, Price(price), timestamp)
-
     input.toRight(Error.OneFrameLookupFailed("Your parse failed"))
   }
 
@@ -62,12 +66,13 @@ class OneFrameDummy[F[_]: Applicative] extends Algebra[F] {
       case Some(rate) => (Right(rate): Either[Error, Rate]).pure[F]
       // match has two cases from getCache, if found, then rate can be returned
       case None => 
+        
         val query = s"$endpoint?pair=${pair.from}${pair.to}"
         val uri = URI.create(query)
         // try opening up connection and set token 
         val request = HttpRequest.newBuilder().uri(uri).header("token", token).GET().build()
         val httpResponse = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
-
+        
         val search = 
           if (httpResponse.statusCode() == 200){
             parse(httpResponse.body()) match {
@@ -76,11 +81,11 @@ class OneFrameDummy[F[_]: Applicative] extends Algebra[F] {
               case Left(_) => Left(Error.OneFrameLookupFailed("Fail to parse your JSON"))
             }
           }else {
+            println("here 3")
             Error.OneFrameLookupFailed("Your query request failed").asLeft[Rate]
           }
-        search.pure[F]      
+        println(search)
+        search.pure[F]//get the results back to function type F      
     }
-    
-  }
-    
+  } 
 }
