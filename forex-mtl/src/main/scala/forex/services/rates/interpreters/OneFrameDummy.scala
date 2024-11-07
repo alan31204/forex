@@ -19,7 +19,7 @@ import scala.collection.mutable
 class OneFrameDummy[F[_]: Applicative] extends Algebra[F] {
 
   private val httpClient = HttpClient.newHttpClient()
-  private val endpoint = "http://localhost:8080/rates"
+  private val endpoint = "http://localhost:8080/rates?"
   private val token = "10dc303535874aeccc86a8251e6992f5"
   
   // Initialize cache using mutable.Map -> key being pair, value being Rate
@@ -64,14 +64,14 @@ class OneFrameDummy[F[_]: Applicative] extends Algebra[F] {
     input.toRight(Error.OneFrameLookupFailed("Your parse failed"))
   }
 
-  def newExtractRate(json: Json):  Either[Error, List[Rate]] ={
+  def newExtractRate(json: Json, pair: Rate.Pair):  Either[Error, Rate] ={
     json.asArray.map{ ratesArray => 
       ratesArray.flatMap{ singleRate => 
         for{
+          // if matched, then it will be matching the type, else will be None
           from <- singleRate.hcursor.get[String]("from").toOption
           to <- singleRate.hcursor.get[String]("to").toOption
           price <- singleRate.hcursor.get[BigDecimal]("price").toOption
-          // if matched, then it will be BigDecimal, else None
           timestampString <- singleRate.hcursor.get[String]("time_stamp").toOption
           timestamp = Timestamp(OffsetDateTime.parse(timestampString))
         } yield{
@@ -79,8 +79,12 @@ class OneFrameDummy[F[_]: Applicative] extends Algebra[F] {
           val currentRate = Rate(currentPair, Price(price), timestamp)
           cacheRate(currentPair, currentRate)
         }
-      }.toList // Right: List[Rate]
+      }
+      getCache(pair) // find the pair in the cache
     }.toRight(Error.OneFrameLookupFailed("At least one of parsing failed"))
+     // Either (Error or Option[Rate])
+    .flatMap(_.toRight(Error.OneFrameLookupFailed("Rate not available")))
+    // Either (Error, Either(Error, Rate)) -> Either [Error, Rate]
   }
 
   override def get(pair: Rate.Pair): F[Error Either Rate] = {
@@ -88,9 +92,13 @@ class OneFrameDummy[F[_]: Applicative] extends Algebra[F] {
       case Some(rate) => (Right(rate): Either[Error, Rate]).pure[F]
       // match has two cases from getCache, if found, then rate can be returned
       case None => 
-        
-        val query = s"$endpoint?pair=${pair.from}${pair.to}"
-        val uri = URI.create(query)
+        // val query = s"${endpoint}pair=${pair.from}${pair.to}"
+
+        // Sample multi query pair=USDJPY&pair=USDCAD
+        val pairCombinations = allPairs.map(p => s"pair=${p.from}${p.to}").mkString("&")
+        val allQuery = s"${endpoint}$pairCombinations"
+      
+        val uri = URI.create(allQuery)
         // try opening up connection and set token 
         val request = HttpRequest.newBuilder().uri(uri).header("token", token).GET().build()
         val httpResponse = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
@@ -98,14 +106,15 @@ class OneFrameDummy[F[_]: Applicative] extends Algebra[F] {
         val search = 
           if (httpResponse.statusCode() == 200){
             parse(httpResponse.body()) match {
-              case Right(json) => extractRate(json, pair).map(rate => cacheRate(pair, rate))
+              // case Right(json) => extractRate(json, pair).map(rate => cacheRate(pair, rate))
+              case Right(json) => newExtractRate(json, pair) 
+              // Instead of finding rate and do cache, Cache all first then find rate
               // If pattern matched, use extractRate to get Rate
               case Left(_) => Left(Error.OneFrameLookupFailed("Fail to parse your JSON"))
             }
-          }else {
+          } else {
             Error.OneFrameLookupFailed("Your query request failed").asLeft[Rate]
           }
-        println(search)
         search.pure[F]//get the results back to function type F      
     }
   } 
